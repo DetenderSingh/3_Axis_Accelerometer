@@ -1,0 +1,1290 @@
+/*
+  FILE : Project_3-AxesAccelerometer.ino
+  PROJECT :  - Project_Accelerometer
+  PROGRAMMER : detender singh
+  DATE : 9th May, 2019
+  DESCRIPTION :
+  The program perform the 3 axes sensing through a sensor( which gives data in the form of multiple of 'g') and display it on the lcd ,
+  either in graph mode or data mode and these modes have further modes like continus or play-pause.
+*/
+
+
+#include <Bounce.h>                                                                            //includes bounce commands or functions which will be used in the program.    
+#include <LiquidCrystal.h>                                                                     //including library of lcd and assigning pin no.'s.
+LiquidCrystal lcd(19, 18, 17, 16, 15, 14);                                                     //create an lcd object
+
+Bounce firstPb(9, 10);                                                                        //create a pb object
+Bounce secondPb(10, 10);                                                                      //create a pb object
+Bounce resetPb(11, 10);                                                                       //create a pb object
+Bounce statePb(12, 10);                                                                        //create a pb object
+
+
+
+int sensorInputY = A7;                                                                          //input constant decleration
+int sensorInputX = A6;
+int sensorInputZ = A8;
+
+int8_t checkForFirstOrSecondPb();                                                                //functions prototypes
+int8_t checkStatePb();
+int8_t checkPlayPausePb();
+int8_t checkResetPb();
+void functionForContinousGraph(float inputValueTemp);
+int8_t functionForPlayPauseGraph(float inputValueTemp, int checkForStartTemp);
+void functionToGetInputsXYZ(float* ptrInputX, float* ptrInputY, float* ptrInputZ);
+void functionToPrintXYZMax(float inputXTemp, float inputYTemp, float inputZTemp);
+int functionBinaryToDec(int* arrayBinary);
+void functionCharacterGen(float* accelerationValues, int j1);
+
+
+void setup() {                                                                                       //setup function
+
+  Serial.begin(9600);                                                                                //setting virtual serial port with its baudrate 9600
+  delay(1000);
+
+  lcd.begin(16, 2);                                                                                  // set up the LCD's number of columns and rows:
+
+  pinMode(9, INPUT_PULLUP);                                                                          //setting up pinmodes
+  pinMode(10, INPUT_PULLUP);
+  pinMode(11, INPUT_PULLUP);
+  pinMode(12, INPUT_PULLUP);
+
+  pinMode(sensorInputX, INPUT);
+  pinMode(sensorInputY, INPUT);
+  pinMode(sensorInputZ, INPUT);
+
+  lcd.printf("     3-Axes ");                                                                       // showing this message for 3 seconds when power on.
+  lcd.setCursor(0, 1);
+  lcd.printf("  Accelerometer");
+  lcd.setCursor(0, 0);
+
+  delay(3000);
+  lcd.clear();
+}
+
+
+
+void loop() {                                                                                          //main program loop
+
+
+  enum statesOfSwitches                                                                                  // declared different states or mode, which are used in this device, using enum to easily track the program flow.
+  {
+    welcome,
+    graphMode,
+    dataMode,
+    graphContinousMode,
+    graphPlayPauseMode,
+    dataContinousMode,
+    dataPauseMode,
+    dataPauseResetMode,
+    graphContinousDirectionMode,
+    graphPAndPDirectionMode,
+    dataPauseShowMaxResetMode
+  };
+
+  static enum statesOfSwitches transitionState = welcome;                                            //variable declerations
+  static int8_t checkForPause = 0;
+  static int8_t flag2 = 0;
+  static int flag1 = 0;
+
+
+
+  static float inputX = 0;
+  static float inputY = 0;
+  static float inputZ = 0;
+
+  static uint32_t currentTime = 0;
+  static uint32_t previousTime = 0;
+  static uint32_t timeDifference = 0;
+
+  static uint32_t newTime = 0;
+  static uint32_t oldTime = 0;
+
+  static int8_t statusOfPb = 0;
+  static int noOfReadings = 0;
+
+  static float inputXArray[1000] = {0};
+  static float inputYArray[1000] = {0};
+  static float inputZArray[1000] = {0};
+  static int maxValueForX = 0;
+  static int maxValueForY = 0;
+  static int maxValueForZ = 0;
+  static  float previousValueX = -4.5;
+  static  float previousValueY = -4.5;
+  static  float previousValueZ = -4.5;
+  static int printOnce = 0;
+  static int checkForNewStart = 0;
+
+  firstPb.update();                                                                                //update the pb's for each time main loop executes
+  secondPb.update();
+  resetPb.update();
+  statePb.update();
+
+
+  switch (transitionState)
+  {
+
+    case welcome :                                                                               //this case will continue printing graph mode and data mode and wait until pushbutton 1 or 2 is not pressed
+      lcd.printf("1. Graph Mode");
+      lcd.setCursor(0, 1);
+      lcd.printf("2. Data Mode");
+      lcd.setCursor(0, 0);
+      statusOfPb = checkForFirstOrSecondPb();                                                    //function called to check status of pb and returns 0,1 or 2
+      if (statusOfPb == 1)
+      {
+        transitionState = graphMode;
+        statusOfPb = 0;
+      }
+      else if (statusOfPb == 2)
+      {
+        transitionState = dataMode;
+        statusOfPb = 0;
+      }
+      else                                                                                       //if no button pressed statusOfPb is 0 so again in same mode.
+      {
+        transitionState = welcome;
+      }
+      break;
+
+
+
+
+    case graphMode :                                                                             //when graph mode pressed
+      if (checkResetPb())                                                                        //if reset button pressed at any time during this mode it will go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+      }
+      else                                                                                       //asking for continus graph or play-pause graph and waiting for pb inputs
+      {
+        lcd.printf("1. Continus Grph");
+        lcd.setCursor(0, 1);
+        lcd.printf("2. Play & Pause");
+        lcd.setCursor(0, 0);
+        statusOfPb = checkForFirstOrSecondPb();                                                 //function called to check status of pb and returns 0,1 or 2
+        if (statusOfPb == 1)
+        {
+          transitionState = graphContinousMode;
+          previousTime = millis();
+          lcd.clear();
+          statusOfPb = 0;
+        }
+        else if (statusOfPb == 2)
+        {
+          transitionState = graphPlayPauseMode;
+          previousTime = millis();
+          lcd.clear();
+          statusOfPb = 0;
+        }
+        else                                                                                     //if no button pressed statusOfPb is 0 so again in same mode.
+        {
+          transitionState = graphMode;
+        }
+      }
+      break;
+
+
+
+
+    case graphContinousMode:                                                                       //graphContinus mode is selected
+      lcd.printf(" choose direction  ");
+      lcd.setCursor(0, 1);
+      lcd.printf("using state pb");
+      lcd.setCursor(0, 0);
+      currentTime = millis();
+      if ((currentTime - previousTime) <= 4000)                                               //it will check the input from pb for only 4 secs
+      {
+        statusOfPb += checkStatePb();
+        oldTime = millis();
+      }
+      else if (statusOfPb > 0)                                                                //if pb is pressed atleast once
+      {
+        transitionState =  graphContinousDirectionMode;
+      }
+      else                                                                                    //else go back to previous mode i.e. graphMode
+      {
+        transitionState = graphMode;
+      }
+      break;
+
+
+
+
+    case graphPlayPauseMode :                                                                  //graph playpause mode is selected
+      lcd.printf(" choose direction  ");
+      lcd.setCursor(0, 1);
+      lcd.printf("using state pb");
+      lcd.setCursor(0, 0);
+      currentTime = millis();
+      if ((currentTime - previousTime) <= 4000)                                                //in this mode also, it will check the input from pb for only 4 secs
+      {
+        statusOfPb += checkStatePb();
+        oldTime = millis();
+      }
+      else if (statusOfPb > 0)                                                                //if pb is pressed atleast once
+      {
+        transitionState = graphPAndPDirectionMode;
+        checkForPause = 0;
+      }
+      else                                                                                    //else go back to previous mode i.e. graphMode
+      {
+        transitionState = graphMode;
+      }
+      break;
+
+
+
+
+
+    case  graphContinousDirectionMode :                                                           //graph continus mode is selected
+
+      if (checkResetPb())                                                                     //if Reset Pb pressed at any time then go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+      }
+      else
+      {
+        newTime = millis();                                                                   //using millis to keep the track of time and storing it in the variable
+        timeDifference = newTime - oldTime;
+
+        if (timeDifference >= 10)                                                             //if the timedifference is equal or greater than the set value for sampling time then only it will go further otherwise keep on checking timedifference
+        {
+          functionToGetInputsXYZ(&inputX, &inputY, &inputZ);                                  ////function called to get input values of X,Y and Z in terms of 'g'.
+
+          oldTime = newTime;                                                                  //setting previous time to latest time for further checking of time diff.
+
+          if (statusOfPb == 1)                                                                //if Pb was pressed once during the graphPlayPauseMode then x graph
+          {
+            functionForContinousGraph(inputX);
+          }
+          else if (statusOfPb == 2)                                                          //if Pb was pressed twice during the graphPlayPauseMode then y graph
+          {
+            functionForContinousGraph(inputY);
+          }
+          else if (statusOfPb == 3)                                                          //if Pb was pressed thrice during the graphPlayPauseMode then z graph
+          {
+            functionForContinousGraph(inputZ);
+          }
+          else                                                                              //else go back to graph mode
+          {
+            transitionState = graphMode ;
+          }
+        }
+      }
+      break;
+
+
+
+
+
+
+
+    case  graphPAndPDirectionMode :                                                          //play&pausedirection mode selected after direction has been chosen using Pb
+
+      if (checkResetPb())                                                                    //if Reset Pb pressed at any time then go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+      }
+      else
+      {
+        flag2 = checkStatePb();                                                              //checking the state of Pb to play graph once only and then stop
+        if (flag2 == 1)
+        {
+          checkForPause = 0;
+          checkForNewStart = 1;
+        }
+        newTime = millis();                                                                 //this millis to keep the track of time and storing it in the variable
+        timeDifference = newTime - oldTime;
+        if (timeDifference >= 10)                                                           //if the timedifference is equal or greater than the set value for sampling time then only it will go further otherwise keep on checking timedifference
+        {
+          functionToGetInputsXYZ(&inputX, &inputY, &inputZ);                                //function called to get input values of X,Y and Z in terms of 'g'.
+
+          oldTime = newTime;                                                                //setting previous time to latest time for further checking of time diff.
+
+          if (statusOfPb == 1 && checkForPause == 0)                                        //if Pb was pressed once during the graphPlayPauseMode then x graph, also pb is pressed once in this mode too
+          {
+            checkForPause =  functionForPlayPauseGraph(inputX, checkForNewStart);          //function called to display graph and return 1 or 0 depending upon is it printing last value which is appearing on the screen so that it will pause after that waiting for pb again
+            checkForNewStart = 0;                                                          //this will be set to 0 everytime so that it completes one cycle on the lcd screen, set only to 1 if pb is pressed during the time it is printing the value on the lcd each cycle.
+          }
+          else if (statusOfPb == 2 && checkForPause == 0)                                  //if Pb was pressed twice during the graphPlayPauseMode then y graph, also pb is pressed once in this mode too
+          {
+            checkForPause = functionForPlayPauseGraph(inputY, checkForNewStart);          //function called to display graph and return 1 or 0 depending upon is it printing last value which is appearing on the screen so that it will pause after that waiting for pb again
+            checkForNewStart = 0;                                                         //this will be set to 0 everytime so that it completes one cycle on the lcd screen, set only to 1 if pb is pressed during the time it is printing the value on the lcd each cycle.
+          }
+          else if (statusOfPb == 3 && checkForPause == 0)                                 //if Pb was pressed thrice during the graphPlayPauseMode then z graph, also pb is pressed once in this mode too
+          {
+            checkForPause = functionForPlayPauseGraph(inputZ, checkForNewStart);          //function called to display graph and return 1 or 0 depending upon is it printing last value which is appearing on the screen so that it will pause after that waiting for pb again
+            checkForNewStart = 0;                                                         //this will be set to 0 everytime so that it completes one cycle on the lcd screen, set only to 1 if pb is pressed during the time it is printing the value on the lcd each cycle.
+          }
+          else                                                                          //if checkforPause is 1, i.e. it has printed one cycle on the lcd then go back to this mode and wait for new press of pb for new cycle
+          {
+            transitionState = graphPAndPDirectionMode ;
+          }
+        }
+      }
+      break;
+
+
+
+
+
+    case dataMode:                                                                        //data mode is selected
+      if (checkResetPb())                                                                 //if reset button pressed at any time during this mode it will go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+      }
+      else
+      {
+        lcd.printf("1. Continus Data");                                                  //asking for continus data or pause-reset the data and waiting for pb inputs
+        lcd.setCursor(0, 1);
+        lcd.printf("2. Pause & Reset");
+        lcd.setCursor(0, 0);
+        statusOfPb = checkForFirstOrSecondPb();                                          //function called to check status of pb and returns 0,1 or 2
+        if (statusOfPb == 1)
+        {
+          transitionState = dataContinousMode;
+          lcd.clear();
+          oldTime = millis();
+          statusOfPb = 0;
+        }
+        else if (statusOfPb == 2)
+        {
+          transitionState = dataPauseMode;
+          oldTime = millis();
+          lcd.clear();
+          statusOfPb = 0;
+        }
+        else                                                                           //if no button pressed statusOfPb is 0 so again in same mode.
+        {
+          transitionState = dataMode;
+        }
+      }
+      break;
+
+
+
+
+
+
+    case dataPauseMode :                                                                //datapause mode is selected
+
+      if (checkResetPb())                                                              //if reset button pressed at any time during this mode it will go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+      }
+      else                                                                             //asking for further modes in this mode
+      {
+        lcd.printf("1. Pause & Reset");
+        lcd.setCursor(0, 1);
+        lcd.printf("2. Pause CheckMx");
+        lcd.setCursor(0, 0);
+        statusOfPb = checkForFirstOrSecondPb();                                       //function called to check status of pb and returns 0,1 or 2
+        if (statusOfPb == 1)
+        {
+          transitionState = dataPauseResetMode;
+          lcd.clear();
+          oldTime = millis();
+          statusOfPb = 0;
+        }
+        else if (statusOfPb == 2)
+        {
+          transitionState = dataPauseShowMaxResetMode;
+          oldTime = millis();
+          lcd.clear();
+          statusOfPb = 0;
+        }
+        else                                                                            //if no button pressed statusOfPb is 0 so again in same mode
+        {
+          transitionState = dataPauseMode;
+        }
+      }
+      break;
+
+
+
+
+
+    case dataContinousMode :                                                                //data continous mode is selected
+      if (checkResetPb())                                                                   //if reset button pressed at any time during this mode it will go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+      }
+      else
+      {
+        newTime = millis();                                                                 //using millis to keep the track of time and storing it in the variable
+        timeDifference = newTime - oldTime;
+        if (timeDifference >= 10)                                                           //if the timedifference is equal or greater than the set value for sampling time then only it will go further otherwise keep on checking timedifference
+        {
+          functionToGetInputsXYZ(&inputX, &inputY, &inputZ);                                //function called to get input values of X,Y and Z in terms of 'g'.
+
+          oldTime = newTime;                                                                //setting previous time to latest time for further checking of time diff
+
+          functionToPrintXYZMax(inputX, inputY, inputZ);                                    //function to print x,y,z and max values in the four corners.
+        }
+      }
+      break;
+
+
+
+
+
+
+    case dataPauseResetMode :                                                              //data pause-reset mode is selected
+      if (checkResetPb())                                                                   //if reset button pressed at any time during this mode it will go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+        flag1 = 0;                                                                         //setting flag to 0 so that next time entering into this mode it will show the continus reading until play paus pb get pressed.
+      }
+      else
+      {
+        if (checkPlayPausePb())                                                           //setting flag to its negation, to pause if pressed once and if pressed again then start the continus data on the lcd again.
+        {
+          flag1 = !flag1;
+        }
+        if (flag1 == 0)                                                                   //if flag 0 then show continus data on the lcd
+        {
+          newTime = millis();                                                              //using millis to keep the track of time and storing it in the variable
+          timeDifference = newTime - oldTime;
+          if (timeDifference >= 10)                                                        //if the timedifference is equal or greater than the set value for sampling time then only it will go further otherwise keep on checking timedifference
+          {
+            functionToGetInputsXYZ(&inputX, &inputY, &inputZ);                             //function called to get input values of X,Y and Z in terms of 'g'.
+
+            oldTime = newTime;                                                              //setting previous time to latest time for further checking of time diff.
+
+            functionToPrintXYZMax(inputX, inputY, inputZ);                                  //function to print x,y,z and max values in the four corners.
+          }
+        }
+      }
+      break;
+
+
+
+
+
+
+    case dataPauseShowMaxResetMode :                                                          //data show max values of X,Y, and Z in between particular time, mode is selected
+
+      if (checkResetPb())                                                                     //if reset button pressed at any time during this mode it will go back to welcome mode
+      {
+        transitionState = welcome;
+        lcd.clear();
+        printOnce = 0;
+      }
+      else
+      {
+        if (checkPlayPausePb())                                                               //this is used to set flag1 to its complement whenever pb pressed
+        {
+          flag1 = !flag1;
+        }
+        if (flag1 == 1)                                                                       //if flag1 is 1 then start taking new readings and printing on the screen of lcd
+        {
+          newTime = millis();                                                                     //using millis to keep the track of time and storing it in the variable
+          timeDifference = newTime - oldTime;
+          if (timeDifference >= 10)                                                               //if the timedifference is equal or greater than the set value for sampling time then only it will go further otherwise keep on checking timedifference
+          {
+
+            functionToGetInputsXYZ(&inputX, &inputY, &inputZ);                                      //to get input values from sensor
+
+            oldTime = newTime;                                                                      //setting previous time to latest time for further checking of time diff.
+
+            lcd.printf("x     y     z : ");
+            lcd.setCursor(0, 1);
+            lcd.printf("%-.1f", inputX);
+            // Serial.println(inputXArray[maxValueForX]);
+            lcd.setCursor(6, 1);
+            lcd.printf("%-.1f", inputY);
+            lcd.setCursor(12, 1);
+            lcd.printf("%-.1f", inputZ);
+            lcd.setCursor(0, 0);
+
+            inputXArray[noOfReadings] = inputX;                                               //savings the values into the array and incrementing it for saving next value into next position of an array
+            inputYArray[noOfReadings] = inputY;
+            inputZArray[noOfReadings] = inputZ;
+            noOfReadings++;
+            printOnce = 0;
+            if (noOfReadings == 998)                                                          //means array is nearly full and pb is not pressed to stop the sample values then set flag1 0 to go into else which is to show max values ofX,Y,Z
+            {
+              flag1 = 0;
+            }
+
+          }
+        }
+        else
+        {
+
+          for ( int s = 0; s <= noOfReadings; s++)                                            //this loops compares the array values one by one and saves the max value finally into the previousValue variable
+          {
+            if (previousValueX < inputXArray[s])
+            {
+              previousValueX = inputXArray[s];
+              maxValueForX = s;
+
+            }
+            if (previousValueY < inputYArray[s])
+            {
+              previousValueY = inputYArray[s];
+              maxValueForY = s;
+            }
+            if (previousValueZ < inputZArray[s])
+            {
+              previousValueZ = inputZArray[s];
+              maxValueForZ = s;
+            }
+          }
+
+          if (printOnce == 0)                                                             //this if is used to print the following command only once
+          {
+            // Serial.println(previousValueX);
+            lcd.printf("max Values are :");
+            lcd.setCursor(0, 1);
+            lcd.printf("%-.1f", previousValueX);
+
+            lcd.setCursor(6, 1);
+            lcd.printf("%-.1f", previousValueY);
+            lcd.setCursor(12, 1);
+            lcd.printf("%-.1f", previousValueZ);
+            lcd.setCursor(0, 0);
+          }
+          memset(inputXArray, -4.5, sizeof(inputXArray));                                 //setting arrays values to the lowest for next time which is -4.5
+          memset(inputYArray, -4.5, sizeof(inputYArray));
+          memset(inputZArray, -4.5, sizeof(inputZArray));
+          printOnce++;                                                                    // incrementing printonce
+          previousValueX = -4.5;
+          previousValueY = -4.5;
+          previousValueZ = -4.5;
+          maxValueForX = -1;
+          maxValueForY = -1;
+          maxValueForZ = -1;
+          noOfReadings = 0;
+
+        }
+      }
+      break;
+
+    default :
+      break;
+  }
+}
+
+
+
+
+
+
+
+// FUNCTION      : checkForFirstOrSecondPb()
+// DESCRIPTION   : Checks whether the 1 or 2
+//                 button has been pressed.
+//
+// PARAMETERS    : none
+// RETURNS       : integer 8bit
+
+int8_t checkForFirstOrSecondPb()
+{
+  int8_t buttonIdentifier = 0;
+  if (firstPb.fallingEdge())                                                                         //then the 1st pushbutton has been pressed
+  {
+
+    buttonIdentifier = 1;
+  }
+  else if (secondPb.fallingEdge())                                                                //then 2nd pressed
+  {
+
+    buttonIdentifier = 2;
+  }
+
+  return buttonIdentifier;                                                                         //will return 0 if 1 or 2 not pressed
+}
+
+
+
+
+
+// FUNCTION      : checkStatePb()
+// DESCRIPTION   : Checks whether the state
+//                 button has been pressed.
+//
+// PARAMETERS    : none
+// RETURNS       : integer 8bit
+
+int8_t checkStatePb()
+{
+  int8_t buttonIdentifier = 0;
+  if (statePb.fallingEdge())                                                                      //then the state pushbutton has been pressed
+  {
+    buttonIdentifier = 1;
+  }
+
+  return buttonIdentifier;                                                                         //will return 0 if not pressed
+}
+
+
+
+
+
+
+// FUNCTION      : checkPlayPausePb()
+// DESCRIPTION   : Checks whether the state
+//                 button has been pressed or not,this function will be used to play and pause the values.
+//
+// PARAMETERS    : none
+// RETURNS       : integer 8bit
+
+int8_t checkPlayPausePb()
+{
+  int8_t buttonIdentifier = 0;
+  if (statePb.fallingEdge())
+  {
+    buttonIdentifier = 1;                                                                          //then the state pushbutton has been pressed
+  }
+
+  return buttonIdentifier;                                                                         //will return 0 if not pressed
+}
+
+
+
+
+
+// FUNCTION      : checkResetPb()
+// DESCRIPTION   : Checks whether the reset
+//                 button has been pressed or not,this function will be used to reset back to main mode.
+//
+// PARAMETERS    : none
+// RETURNS       : integer 8bit
+
+int8_t checkResetPb()
+{
+  int8_t buttonIdentifier = 0;
+  if (resetPb.fallingEdge())
+  {
+    buttonIdentifier = 1;                                                                          //then the reset pushbutton has been pressed
+  }
+
+  return buttonIdentifier;                                                                         //will return 0 if not pressed
+}
+
+
+
+
+
+
+// FUNCTION      : functionForContinousGraph()
+// DESCRIPTION   : this function takes the value and save it into array and increments the array for next time,
+//                 if array gets full then it calls a function to generate charater for lcd and displays
+//                 that on lcd which is according to the input value, which appears like a graph
+//                 hence shows a continus graph.
+// PARAMETERS    : float variable.
+// RETURNS       : none
+
+void functionForContinousGraph(float inputValueTemp)
+{
+  static int noOfCharacters = 0;
+  static float dataArray[5] = {0};
+  static int dataLimit = 0;
+  if (noOfCharacters == 0 && dataLimit == 0)                                                                  //only during the first character and first line of that character reset the lcd and display "graph continus" so that to avoid flickering
+  {
+    lcd.begin(16, 2);
+    lcd.printf("graph continous:");
+  }
+
+  dataArray[dataLimit] = inputValueTemp;                                                                      //saving inputValue into the array
+  dataLimit++;                                                                                            //increment datalimit to store into next position of array
+
+  if (dataLimit == 5)                                                                                      //if last value of array has entered
+  {
+
+    functionCharacterGen(dataArray, noOfCharacters);                                                          //call the function to print the character generated
+    delay(100);
+    dataArray[0] = 0;                                                                                         //setting to 0 for next character
+    dataArray[1] = 0;
+    dataArray[2] = 0;
+    dataArray[3] = 0;
+    dataArray[4] = 0;
+    if (noOfCharacters != 7)                                                                                //since there are only 8 character which can be generated in this lcd, so if it is not 7 then increment, otherwise set to 0
+    {
+      noOfCharacters++;
+    }
+    else
+    {
+      noOfCharacters = 0;
+    }
+
+    dataLimit = 0;                                                                                          //datalimit also set to 0 for next character
+  }
+
+}
+
+
+
+
+
+
+// FUNCTION      : functionForPlayPauseGraph()
+// DESCRIPTION   : this function takes the value and save it into array and increments the array for next time,
+//                 if array gets full then it calls a function to generate charater for lcd and displays
+//                 that on lcd which is according to the input value, which appears like a graph,
+//                 but it stops after showing 1 full cycle and start again new cycle if state pb is pressed,
+//                 also if state pb is pressed in between that cycle it starts new cycle without waiting for current cycle to end.
+// PARAMETERS    : float variable, int variable.
+// RETURNS       : int8_t type
+
+int8_t functionForPlayPauseGraph(float inputValueTemp, int checkForStartTemp)
+{
+  static int8_t checkForPauseTemp = 0;
+  static int noOfCharacters = 0;
+  static float dataArray[5] = {0};
+  static int dataLimit = 0;
+  if (checkForStartTemp)                                                                                        //if state pb is pressed at any time, start from the first value of first character to show a new cycle.
+  {
+    noOfCharacters = 0;
+    dataLimit = 0;
+  }
+
+  if (noOfCharacters == 0 && dataLimit == 0)                                                                   //only during the first character and first line of that character reset the lcd and display "graph continus" so that to avoid flickering
+  {
+    lcd.begin(16, 2);
+    lcd.printf("graph play pause:");
+    checkForPauseTemp = 0;
+  }
+  dataArray[dataLimit] = inputValueTemp;
+  dataLimit++;
+
+  if (dataLimit == 5)
+  {
+    functionCharacterGen(dataArray, noOfCharacters);                                                          //call the function to print the character generated
+    delay(100);
+    dataArray[0] = 0;
+    dataArray[1] = 0;
+    dataArray[2] = 0;
+    dataArray[3] = 0;
+    dataArray[4] = 0;
+    dataLimit = 0;
+    if (noOfCharacters != 7)                                                                                  //since there are only 8 character which can be generated in this lcd, so if it is not 7 then increment, otherwise pause and wait for state pb to be pressed
+    {
+      noOfCharacters++;
+      checkForPauseTemp = 0;
+    }
+    else
+    {
+      noOfCharacters = 0;
+      checkForPauseTemp = 1;                                                                                  //if last character has been printer then set it to 1 to stop the cycle and wait for state pb to be pressed for new cycle
+    }
+  }
+  return checkForPauseTemp;                                                                                   //returning 0 if last character is not get printed
+}
+
+
+
+
+
+
+
+
+// FUNCTION      : functionToGetInputsXYZ()
+// DESCRIPTION   : this function takes the input values of sensor and save it into variables through pointers ,
+//                 also these values then converting into multiples of 'g'.
+// PARAMETERS    : 3 float ptr variable.
+// RETURNS       : none
+
+void functionToGetInputsXYZ(float* ptrInputX, float* ptrInputY, float* ptrInputZ)
+{
+  *ptrInputX = analogRead(sensorInputX);                                                         //reading the value from temp. sensor
+  *ptrInputY = analogRead(sensorInputY);
+  *ptrInputZ = analogRead(sensorInputZ);
+  delay(5);
+  *ptrInputX = (*ptrInputX * 3.3 / 1024) - 1.5;                                                  //converting into values that are in the form of multipuls of 'g' i.e. if value on lcd is +2 it means it is +2g
+  *ptrInputX = *ptrInputX / .3;
+
+  *ptrInputY = (*ptrInputY * 3.3 / 1024) - 1.5;
+  *ptrInputY = *ptrInputY / .3;
+
+  *ptrInputZ = (*ptrInputZ * 3.3 / 1024) - 1.5;
+  *ptrInputZ = *ptrInputZ / .3;
+}
+
+
+
+
+
+
+// FUNCTION      : functionToPrintXYZMax()
+// DESCRIPTION   : this function prints the x,y,z and max value out of these(x,y,z) on the four corners of the lcd,
+//
+// PARAMETERS    : 3 float variables.
+// RETURNS       : none
+
+void functionToPrintXYZMax(float inputXTemp, float inputYTemp, float inputZTemp)
+{
+  lcd.printf("%-.1f", inputXTemp);
+  lcd.setCursor(12, 0);
+  lcd.printf("%-.1f", inputYTemp);
+  lcd.setCursor(0, 1);
+  lcd.printf("%-.1f", inputZTemp);
+
+  if (inputXTemp > inputYTemp)
+  {
+    if (inputXTemp > inputZTemp)
+    {
+      lcd.setCursor(12, 1);
+      lcd.printf("%-.1f", inputXTemp);
+    }
+    else
+    {
+      lcd.setCursor(12, 1);
+      lcd.printf("%-.1f", inputZTemp);
+    }
+
+  }
+  else if (inputYTemp > inputZTemp)
+  {
+    lcd.setCursor(12, 1);
+    lcd.printf("%-.1f", inputYTemp);
+  }
+  else
+  {
+    lcd.setCursor(12, 1);
+    lcd.printf("%-.1f", inputZTemp);
+  }
+  delay(200);
+  lcd.setCursor(0, 0);
+}
+
+
+
+
+
+
+// FUNCTION      : functionBinaryToDec()
+// DESCRIPTION   : this function assign value from 0 to 31 to decimalvaluetemp variable, depending upon the values of arraybinary (array), which is of integer type also
+//                 so it is converting int array( which has data in the form of only 1 and 0) into decimal value (which is a single variable)
+//
+// PARAMETERS    : int ptr variable.
+// RETURNS       : integer
+
+int functionBinaryToDec(int* arrayBinary)
+{
+  int decimalValueTemp = -1;
+  if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 0;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 1;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 2;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 3;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 4;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 5;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 6;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 7;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 8;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 9;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 10;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 11;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 12;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 13;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 14;
+  }
+  else if (*arrayBinary == 0 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 15;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 16;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 17;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 18;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 19;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 20;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 21;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 22;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 0 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 23;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 24;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 25;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 26;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 0 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 27;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 28;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 0 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 29;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 0)
+  {
+    decimalValueTemp = 30;
+  }
+  else if (*arrayBinary == 1 && *(arrayBinary + 1) == 1 && *(arrayBinary + 2) == 1 && *(arrayBinary + 3) == 1 && *(arrayBinary + 4) == 1)
+  {
+    decimalValueTemp = 31;
+  }
+  return decimalValueTemp;
+}
+
+
+
+
+
+
+
+// FUNCTION      : functionCharacterGen()
+// DESCRIPTION   : this function generates the character according to the given value of the sensor input and displays on the lcd as a graph
+//
+// PARAMETERS    : float ptr variable,iny variable
+// RETURNS       : none
+
+void functionCharacterGen(float* accelerationValues, int j1)
+{
+
+
+  int arrayForByte0[5] = {0};
+  int arrayForByte1[5] = {0};
+  int arrayForByte2[5] = {0};
+  int arrayForByte3[5] = {0};
+  int arrayForByte4[5] = {0};
+  int arrayForByte5[5] = {0};
+  int arrayForByte6[5] = {0};
+  int arrayForByte7[5] = {0};
+  int decimalValue0 = 0;
+  int decimalValue1 = 0;
+  int decimalValue2 = 0;
+  int decimalValue3 = 0;
+  int decimalValue4 = 0;
+  int decimalValue5 = 0;
+  int decimalValue6 = 0;
+  int decimalValue7 = 0;
+
+  for (int r = 0; r <= 4; r++)                                                                            //this loop is assigning values one by one to the arrays positions, each time r increments only one if get executed depending upon the sensor value given
+  {
+    if (*(accelerationValues + r) >= -4.5 && *(accelerationValues + r) <= -2.5 )
+    {
+      arrayForByte0[r] = 0;
+      arrayForByte1[r] = 0;
+      arrayForByte2[r] = 0;
+      arrayForByte3[r] = 0;
+      arrayForByte4[r] = 0;
+      arrayForByte5[r] = 0;
+      arrayForByte6[r] = 0;
+      arrayForByte7[r] = 1;
+
+    }
+    else if (*(accelerationValues + r) > -2.5 && *(accelerationValues + r) <= -1.5 )
+
+    {
+      arrayForByte0[r] = 0;
+      arrayForByte1[r] = 0;
+      arrayForByte2[r] = 0;
+      arrayForByte3[r] = 0;
+      arrayForByte4[r] = 0;
+      arrayForByte5[r] = 0;
+      arrayForByte6[r] = 1;
+      arrayForByte7[r] = 0;
+    }
+    else if (*(accelerationValues + r) > -1.5 && *(accelerationValues + r) <= -0.5 )
+
+    {
+
+      arrayForByte0[r] = 0;
+      arrayForByte1[r] = 0;
+      arrayForByte2[r] = 0;
+      arrayForByte3[r] = 0;
+      arrayForByte4[r] = 0;
+      arrayForByte5[r] = 1;
+      arrayForByte6[r] = 0;
+      arrayForByte7[r] = 0;
+    }
+    else if (*(accelerationValues + r) > -0.5 && *(accelerationValues + r) <= 0.5 )
+    {
+
+      arrayForByte0[r] = 0;
+      arrayForByte1[r] = 0;
+      arrayForByte2[r] = 0;
+      arrayForByte3[r] = 0;
+      arrayForByte4[r] = 1;
+      arrayForByte5[r] = 0;
+      arrayForByte6[r] = 0;
+      arrayForByte7[r] = 0;
+    }
+    else if (*(accelerationValues + r) > 0.5 && *(accelerationValues + r) <= 1.5 )
+    {
+
+      arrayForByte0[r] = 0;
+      arrayForByte1[r] = 0;
+      arrayForByte2[r] = 0;
+      arrayForByte3[r] = 1;
+      arrayForByte4[r] = 0;
+      arrayForByte5[r] = 0;
+      arrayForByte6[r] = 0;
+      arrayForByte7[r] = 0;
+    }
+    else if (*(accelerationValues + r) > 1.5 && *(accelerationValues + r) <= 2.5 )
+    {
+
+      arrayForByte0[r] = 0;
+      arrayForByte1[r] = 0;
+      arrayForByte2[r] = 1;
+      arrayForByte3[r] = 0;
+      arrayForByte4[r] = 0;
+      arrayForByte5[r] = 0;
+      arrayForByte6[r] = 0;
+      arrayForByte7[r] = 0;
+    }
+    else if (*(accelerationValues + r) > 2.5 && *(accelerationValues + r) <= 3.4 )
+    {
+
+      arrayForByte0[r] = 0;
+      arrayForByte1[r] = 1;
+      arrayForByte2[r] = 0;
+      arrayForByte3[r] = 0;
+      arrayForByte4[r] = 0;
+      arrayForByte5[r] = 0;
+      arrayForByte6[r] = 0;
+      arrayForByte7[r] = 0;
+    }
+    else if (*(accelerationValues + r) > 3.40 )
+    {
+
+      arrayForByte0[r] = 1;
+      arrayForByte1[r] = 0;
+      arrayForByte2[r] = 0;
+      arrayForByte3[r] = 0;
+      arrayForByte4[r] = 0;
+      arrayForByte5[r] = 0;
+      arrayForByte6[r] = 0;
+      arrayForByte7[r] = 0;
+    }
+
+
+  }
+  decimalValue0 = functionBinaryToDec(arrayForByte0);                                                           //function called to get the values from 0 to 31 instead of "00000" to "11111" form
+  decimalValue1 = functionBinaryToDec(arrayForByte1);
+  decimalValue2 = functionBinaryToDec(arrayForByte2);
+  decimalValue3 = functionBinaryToDec(arrayForByte3);
+  decimalValue4 = functionBinaryToDec(arrayForByte4);
+  decimalValue5 = functionBinaryToDec(arrayForByte5);
+  decimalValue6 = functionBinaryToDec(arrayForByte6);
+  decimalValue7 = functionBinaryToDec(arrayForByte7);
+
+
+
+  byte firstChartr[8] = {                                                                                   //bytes declaring for characters to be generated on lcd for graph since max 8 characters, so declaring 8 bytes
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+
+  byte secondChartr[8] = {
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+  byte thirdChartr[8] = {
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+  byte fourthChartr[8] = {
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+  byte fifthChartr[8] = {
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+  byte sixthChartr[8] = {
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+  byte seventhChartr[8] = {
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+  byte eightChartr[8] = {
+    (byte)decimalValue0,
+    (byte)decimalValue1,
+    (byte)decimalValue2,
+    (byte)decimalValue3,
+    (byte)decimalValue4,
+    (byte)decimalValue5,
+    (byte)decimalValue6,
+    (byte)decimalValue7,
+  };
+  if (j1 == 0)                                                                                                  //depending upon the position of the j1 variable that corrosponding character will be created through createChar function
+  {
+    lcd.createChar(0, firstChartr);
+  }
+  else if (j1 == 1)
+  {
+    lcd.createChar(1, secondChartr);
+  } else if (j1 == 2)
+  {
+    lcd.createChar(2, thirdChartr);
+  } else if (j1 == 3)
+  {
+    lcd.createChar(3, fourthChartr);
+  } else if (j1 == 4)
+  {
+    lcd.createChar(4, fifthChartr);
+  } else if (j1 == 5)
+  {
+    lcd.createChar(5, sixthChartr);
+  } else if (j1 == 6)
+  {
+    lcd.createChar(6, seventhChartr);
+  } else if (j1 == 7)
+  {
+    lcd.createChar(7, eightChartr);
+  }
+
+  lcd.setCursor(j1 + 8, 1);
+
+
+
+  if (j1 == 0)                                                                                                    //depending upon j1 variable only that character will be written on that particular position of the cycle
+  {
+    lcd.write(byte(0));
+  }
+  else if (j1 == 1)
+  {
+
+    lcd.write(byte(1));
+  } else if (j1 == 2)
+  {
+
+    lcd.write(byte(2));
+  } else if (j1 == 3)
+  {
+    lcd.write(byte(3));
+  } else if (j1 == 4)
+  {
+    lcd.write(byte(4));
+  }  else if (j1 == 5)
+  {
+    lcd.write(byte(5));
+  }  else if (j1 == 6)
+  {
+    lcd.write(byte(6));
+  }
+  else if (j1 == 7)
+  {
+    lcd.write(byte(7));
+  }
+}
